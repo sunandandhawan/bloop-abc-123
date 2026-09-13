@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>Type Bubbles</title>
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="manifest" href="manifest.json">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body {
+      width: 100dvw; height: 100dvh;
+      margin: 0; padding: 0;
+      background: #000;
+      font-family: system-ui, sans-serif;
+      -webkit-user-select: none; user-select: none;
+      overscroll-behavior: none;
+      touch-action: none;
+      overflow: hidden;
+    }
+
+    /* ── Game canvas ────────────────────────────────────────── */
+    #game {
+      position: absolute; inset: 0;
+    }
+
+    /* ── Hint ───────────────────────────────────────────────── */
+    #hint {
+      position: fixed; bottom: 8px; width: 100%;
+      text-align: center; font-size: 12px;
+      color: rgba(255,255,255,0.22);
+      pointer-events: none; z-index: 2;
+      transition: opacity .4s;
+    }
+
+    /* ── Bubbles ─────────────────────────────────────────────── */
+    .bubble {
+      position: absolute;
+      border-radius: 50%;
+      border: none;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 900; color: #fff;
+      text-align: center;
+      pointer-events: none;           /* touch does nothing in this game */
+      background-image: radial-gradient(
+        circle at 34% 32%,
+        rgba(255,255,255,0.55) 0%,
+        rgba(255,255,255,0.10) 38%,
+        rgba(0,0,0,0.12) 100%
+      );
+      box-shadow:
+        0 8px 24px rgba(0,0,0,.40),
+        inset 0 -4px 10px rgba(0,0,0,.25),
+        inset 0  3px  8px rgba(255,255,255,.30);
+      text-shadow: 0 2px 6px rgba(0,0,0,.45);
+      animation:
+        bubble-in .35s cubic-bezier(.34,1.56,.64,1) both,
+        bob var(--bob-dur,2.8s) ease-in-out var(--bob-delay,0s) infinite;
+      will-change: transform;
+    }
+
+    @keyframes bubble-in {
+      from { transform: scale(0); opacity: 0; }
+      to   { transform: scale(1); opacity: 1; }
+    }
+
+    @keyframes bob {
+      0%,100% { transform: translateY(0)   rotate(0deg);   }
+      30%     { transform: translateY(-8px) rotate(-2deg);  }
+      70%     { transform: translateY(-5px) rotate(1.5deg); }
+    }
+
+    /* ── Pop animation (backspace) ────────────────────────── */
+    .pop-kb {
+      animation: pop-kb .34s ease-out forwards !important;
+      pointer-events: none;
+    }
+    @keyframes pop-kb {
+      0%   { transform: scale(1);    opacity: 1; filter: brightness(1); }
+      20%  { transform: scale(1.18); opacity: 1; filter: brightness(3) saturate(0); }
+      50%  { transform: scale(0.9);  opacity: 1; filter: brightness(2); }
+      100% { transform: scale(0.2);  opacity: 0; filter: brightness(1); }
+    }
+    .pop-kb::after {
+      content: '';
+      position: absolute; inset: -6px;
+      border-radius: 50%;
+      border: 5px solid rgba(255,255,255,.9);
+      animation: kb-ring .42s cubic-bezier(.2,.8,.4,1) forwards;
+      pointer-events: none;
+    }
+    @keyframes kb-ring {
+      0%   { transform: scale(0.8); opacity: 1;  }
+      60%  { transform: scale(2.2); opacity: .6; }
+      100% { transform: scale(3.0); opacity: 0;  }
+    }
+
+    /* ── Screen-full flash ───────────────────────────────── */
+    #error-flash {
+      position: fixed; inset: 0;
+      background: rgba(255,60,60,0.18);
+      pointer-events: none;
+      opacity: 0;
+      z-index: 5;
+      transition: opacity .08s;
+    }
+    #error-flash.on { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div id="game"></div>
+  <div id="hint">⌨ type a letter or number · backspace to pop</div>
+  <div id="error-flash"></div>
+
+  <script>
+    /* ═══════════════════════════════════════════════════════════
+       CONSTANTS
+    ═══════════════════════════════════════════════════════════ */
+    const BUBBLE_SIZE = 110;
+    const GAP         = 14;
+    const COLORS = [
+      "#ef4444","#f97316","#eab308","#22c55e",
+      "#3b82f6","#8b5cf6","#ec4899","#06b6d4"
+    ];
+
+    /* ═══════════════════════════════════════════════════════════
+       STATE
+    ═══════════════════════════════════════════════════════════ */
+    const game    = document.getElementById('game');
+    const hint    = document.getElementById('hint');
+    const flash   = document.getElementById('error-flash');
+    let   bubbles = [];   // [{el, label, x, y}]
+    let   hintHidden = false;
+
+    /* ═══════════════════════════════════════════════════════════
+       WEB AUDIO
+    ═══════════════════════════════════════════════════════════ */
+    let audioCtx = null;
+
+    function getAudioCtx() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return audioCtx;
+    }
+
+    /* Cheerful spawn sound — rising chirp */
+    function playSpawnSound() {
+      try {
+        const ctx = getAudioCtx(), now = ctx.currentTime;
+
+        const o1 = ctx.createOscillator(), g1 = ctx.createGain();
+        o1.type = 'sine';
+        o1.frequency.setValueAtTime(320, now);
+        o1.frequency.exponentialRampToValueAtTime(880, now + 0.12);
+        g1.gain.setValueAtTime(0.38, now);
+        g1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+        o1.connect(g1).connect(ctx.destination);
+        o1.start(now); o1.stop(now + 0.18);
+
+        const o2 = ctx.createOscillator(), g2 = ctx.createGain();
+        o2.type = 'triangle';
+        o2.frequency.setValueAtTime(1050, now + 0.06);
+        o2.frequency.exponentialRampToValueAtTime(1400, now + 0.16);
+        g2.gain.setValueAtTime(0, now);
+        g2.gain.setValueAtTime(0.22, now + 0.06);
+        g2.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+        o2.connect(g2).connect(ctx.destination);
+        o2.start(now + 0.06); o2.stop(now + 0.28);
+
+        const o3 = ctx.createOscillator(), g3 = ctx.createGain();
+        o3.type = 'sine';
+        o3.frequency.setValueAtTime(160, now);
+        o3.frequency.exponentialRampToValueAtTime(60, now + 0.08);
+        g3.gain.setValueAtTime(0.28, now);
+        g3.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        o3.connect(g3).connect(ctx.destination);
+        o3.start(now); o3.stop(now + 0.12);
+      } catch(e) {}
+    }
+
+    /* Pop sound — same chirp, slightly higher for backspace */
+    function playPopSound() {
+      try {
+        const ctx = getAudioCtx(), now = ctx.currentTime;
+
+        const o1 = ctx.createOscillator(), g1 = ctx.createGain();
+        o1.type = 'sine';
+        o1.frequency.setValueAtTime(500, now);
+        o1.frequency.exponentialRampToValueAtTime(1100, now + 0.14);
+        g1.gain.setValueAtTime(0.35, now);
+        g1.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        o1.connect(g1).connect(ctx.destination);
+        o1.start(now); o1.stop(now + 0.2);
+
+        const o2 = ctx.createOscillator(), g2 = ctx.createGain();
+        o2.type = 'triangle';
+        o2.frequency.setValueAtTime(1200, now + 0.05);
+        o2.frequency.exponentialRampToValueAtTime(1800, now + 0.18);
+        g2.gain.setValueAtTime(0, now);
+        g2.gain.setValueAtTime(0.20, now + 0.05);
+        g2.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+        o2.connect(g2).connect(ctx.destination);
+        o2.start(now + 0.05); o2.stop(now + 0.3);
+      } catch(e) {}
+    }
+
+    /* Error sound — descending buzz */
+    function playErrorSound() {
+      try {
+        const ctx = getAudioCtx(), now = ctx.currentTime;
+
+        const o1 = ctx.createOscillator(), g1 = ctx.createGain();
+        o1.type = 'sawtooth';
+        o1.frequency.setValueAtTime(280, now);
+        o1.frequency.exponentialRampToValueAtTime(110, now + 0.18);
+        g1.gain.setValueAtTime(0.22, now);
+        g1.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+        o1.connect(g1).connect(ctx.destination);
+        o1.start(now); o1.stop(now + 0.22);
+
+        const o2 = ctx.createOscillator(), g2 = ctx.createGain();
+        o2.type = 'square';
+        o2.frequency.setValueAtTime(90, now);
+        o2.frequency.exponentialRampToValueAtTime(55, now + 0.14);
+        g2.gain.setValueAtTime(0.18, now);
+        g2.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+        o2.connect(g2).connect(ctx.destination);
+        o2.start(now); o2.stop(now + 0.18);
+      } catch(e) {}
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       SPEECH
+    ═══════════════════════════════════════════════════════════ */
+    function speak(text) {
+      if (!('speechSynthesis' in window)) return;
+      const u = new SpeechSynthesisUtterance(text);
+      u.pitch = 1.1; u.rate = 0.9;
+      window.speechSynthesis.cancel();   // don't queue up
+      window.speechSynthesis.speak(u);
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       LAYOUT — sequential left-to-right, wrap to next row
+       Like typing in notepad: top-left origin, row by row.
+    ═══════════════════════════════════════════════════════════ */
+    const MARGIN = 16; // fixed left/top margin in px
+
+    function cols() {
+      return Math.floor((game.clientWidth - MARGIN + GAP) / (BUBBLE_SIZE + GAP));
+    }
+
+    function rows() {
+      return Math.floor((game.clientHeight - MARGIN + GAP) / (BUBBLE_SIZE + GAP));
+    }
+
+    function slotPos(index) {
+      const c   = index % cols();
+      const r   = Math.floor(index / cols());
+      return {
+        x: MARGIN + c * (BUBBLE_SIZE + GAP),
+        y: MARGIN + r * (BUBBLE_SIZE + GAP),
+      };
+    }
+
+    function isFull() {
+      return bubbles.length >= cols() * rows();
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       SPAWN
+    ═══════════════════════════════════════════════════════════ */
+    function spawnBubble(label) {
+      if (isFull()) {
+        playErrorSound();
+        triggerErrorFlash();
+        return;
+      }
+
+      const pos      = slotPos(bubbles.length);
+      const color    = COLORS[(Math.random() * COLORS.length) | 0];
+      const bobDur   = (2.4 + Math.random() * 1.2).toFixed(2) + 's';
+      const bobDelay = (Math.random() * -3).toFixed(2) + 's';
+      const fontSize = (BUBBLE_SIZE * 0.44) + 'px';
+
+      const el = document.createElement('div');
+      el.className   = 'bubble';
+      el.textContent = label.toUpperCase();
+      el.style.cssText = [
+        `background-color:${color}`,
+        `width:${BUBBLE_SIZE}px`,
+        `height:${BUBBLE_SIZE}px`,
+        `font-size:${fontSize}`,
+        `left:${pos.x}px`,
+        `top:${pos.y}px`,
+        `--bob-dur:${bobDur}`,
+        `--bob-delay:${bobDelay}`,
+      ].join(';');
+
+      game.appendChild(el);
+      bubbles.push({ el, label: label.toUpperCase(), x: pos.x, y: pos.y });
+
+      playSpawnSound();
+      speak(label);
+      hideHint();
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       POP (backspace removes last bubble)
+    ═══════════════════════════════════════════════════════════ */
+    function popLastBubble() {
+      if (bubbles.length === 0) {
+        playErrorSound();
+        return;
+      }
+      const { el } = bubbles.pop();
+      el.classList.add('pop-kb');
+      playPopSound();
+      setTimeout(() => el.remove(), 420);
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       ERROR FLASH
+    ═══════════════════════════════════════════════════════════ */
+    let flashTimer = null;
+    function triggerErrorFlash() {
+      flash.classList.add('on');
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => flash.classList.remove('on'), 120);
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       HINT
+    ═══════════════════════════════════════════════════════════ */
+    function hideHint() {
+      if (hintHidden) return;
+      hintHidden = true;
+      hint.style.opacity = '0';
+      setTimeout(() => hint.style.display = 'none', 400);
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       KEYBOARD
+    ═══════════════════════════════════════════════════════════ */
+    const VALID = /^[a-zA-Z0-9]$/;
+
+    document.addEventListener('keyup', e => {
+      if (e.key === 'Backspace') {
+        popLastBubble();
+        return;
+      }
+
+      // Ignore all modifier / function keys
+      if (e.key.length > 1) return;
+
+      if (VALID.test(e.key)) {
+        spawnBubble(e.key);
+      } else {
+        // Punctuation, space, symbols etc.
+        playErrorSound();
+        triggerErrorFlash();
+      }
+    });
+
+    /* ═══════════════════════════════════════════════════════════
+       RESIZE — reposition bubbles to match new col count
+    ═══════════════════════════════════════════════════════════ */
+    const ro = new ResizeObserver(() => {
+      bubbles.forEach((b, i) => {
+        const pos = slotPos(i);
+        b.x = pos.x; b.y = pos.y;
+        b.el.style.left = pos.x + 'px';
+        b.el.style.top  = pos.y + 'px';
+      });
+    });
+    ro.observe(game);
+  </script>
+  <script src="pwa.js"></script>
+</body>
+</html>
