@@ -99,6 +99,24 @@
       100% { transform: scale(3.0); opacity: 0;  }
     }
 
+    /* ── Win message ─────────────────────────────────────────── */
+    .win-message {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: clamp(32px, 8vw, 64px);
+      font-weight: 900;
+      color: #fff;
+      text-shadow: 0 0 40px rgba(255,220,80,.7), 0 2px 10px rgba(0,0,0,.6);
+      background: rgba(0,0,0,0.6);
+      animation: win-in .5s cubic-bezier(.34,1.56,.64,1) both;
+      z-index: 10;
+      pointer-events: none;
+    }
+    @keyframes win-in {
+      from { transform: scale(0.6); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+
     /* ── Screen-full flash ───────────────────────────────── */
     #error-flash {
       position: fixed; inset: 0;
@@ -133,8 +151,10 @@
     const game    = document.getElementById('game');
     const hint    = document.getElementById('hint');
     const flash   = document.getElementById('error-flash');
-    let   bubbles = [];   // [{el, label, x, y}]
-    let   hintHidden = false;
+    let   bubbles      = [];   // [{el, label, x, y}]
+    let   hintHidden   = false;
+    let   totalSpawned = 0;
+    let   gameOver     = false;
 
     /* ═══════════════════════════════════════════════════════════
        WEB AUDIO
@@ -275,7 +295,7 @@
        SPAWN
     ═══════════════════════════════════════════════════════════ */
     function spawnBubble(label) {
-      if (isFull()) {
+      if (gameOver || isFull()) {
         playErrorSound();
         triggerErrorFlash();
         return;
@@ -303,10 +323,22 @@
 
       game.appendChild(el);
       bubbles.push({ el, label: label.toUpperCase(), x: pos.x, y: pos.y });
+      totalSpawned++;
 
       playSpawnSound();
       speak(label);
       hideHint();
+
+      if (totalSpawned >= 51) {
+        gameOver = true;
+        setTimeout(() => {
+          speak('Great job baby!');
+          const msg = document.createElement('div');
+          msg.className = 'win-message';
+          msg.textContent = '🎉 Great job baby!';
+          game.appendChild(msg);
+        }, 600); // let the last bubble's spawn animation finish
+      }
     }
 
     /* ═══════════════════════════════════════════════════════════
@@ -349,6 +381,8 @@
     const VALID = /^[a-zA-Z0-9]$/;
 
     document.addEventListener('keyup', e => {
+      if (gameOver) return;
+
       if (e.key === 'Backspace') {
         popLastBubble();
         return;
