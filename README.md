@@ -80,7 +80,7 @@ Any static host works — GitHub Pages, Netlify, Vercel, Cloudflare Pages.
 
 1. Push the repo to GitHub
 2. Go to **Settings → Pages → Source** and pick your branch
-3. The game is live at `https://<your-username>.github.io/<repo-name>/`
+3. The game is live at `https://sunandandhawan.github.io/bloop-abc-123/`
 
 For the PWA to be installable the site must be served over HTTPS, which all of the above hosts do by default.
 
