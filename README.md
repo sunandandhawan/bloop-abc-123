@@ -17,12 +17,15 @@ Built as a single HTML file — no framework, no build step, no dependencies.
 
 Bubbles appear **left to right, top to bottom** — just like typing in a text editor. When a row is full the next bubble wraps to the next line. When the whole screen is full, pressing any key plays the error sound until backspace makes room.
 
+Once **51 bubbles** have been created, the game ends with a "🎉 Great job baby!" message spoken aloud and displayed on screen. All further keypresses are ignored until the page is refreshed.
+
 Every bubble speaks its letter or number aloud when it appears (Web Speech API). Popping sounds use the Web Audio API — no audio files needed.
 
 ---
 
 ## Features
 
+- **51-bubble win condition** — after 51 bubbles have been created a "🎉 Great job baby!" message appears with a golden glow animation, spoken aloud via speech synthesis; all further keypresses are disabled until the page is refreshed
 - **No menu, no loading screen** — opens straight to the game
 - **Glossy animated bubbles** — each one bobs gently at its own speed and phase
 - **Springy spawn animation** — bubbles bounce in with a slight overshoot
